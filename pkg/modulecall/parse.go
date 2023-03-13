@@ -2,6 +2,8 @@ package modulecall
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
@@ -46,17 +48,35 @@ func Parse(raw tfconfig.ModuleCall) (*Parsed, error) {
 		if raw.Version == "" {
 			return &out, nil
 		}
-		version, err := semver.NewVersion(raw.Version)
-		if err == nil { // interpret a single-version constraint as a pinned version
-			out.Version = version
-			out.VersionString = raw.Version
+
+		terraformConstrainRegex := regexp.MustCompile("^(?:=|!=|>|<|>=|<=|~>)?(.+)$")
+		if terraformConstrainRegex.Match([]byte(raw.Version)) {
+			extractedVersion := terraformConstrainRegex.FindStringSubmatch(raw.Version)[1]
+			version, err := semver.NewVersion(extractedVersion)
+			if err == nil { // interpret a single-version constraint as a pinned version
+				out.Version = version
+				out.VersionString = version.String()
+			}
+		} else {
+			version, err := semver.NewVersion(raw.Version)
+			if err == nil { // interpret a single-version constraint as a pinned version
+				out.Version = version
+				out.VersionString = version.String()
+			}
 		}
-		constraints, err := semver.NewConstraint(raw.Version)
+		// constraints, err := semver.NewConstraint(raw.Version)
+		var constraints *semver.Constraints
+		if strings.Contains(raw.Version, "~>") { // handle pessimistic contraint
+			pessimisticVersion := strings.ReplaceAll(raw.Version, "~>", "^")
+			constraints, err = semver.NewConstraint(pessimisticVersion)
+		} else {
+			constraints, err = semver.NewConstraint(raw.Version)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("parse constraint %q: %w", raw.Version, err)
 		}
 		out.Constraints = constraints
-		out.ConstraintsString = raw.Version
+		out.ConstraintsString = constraints.String()
 	}
 	return &out, nil
 }
